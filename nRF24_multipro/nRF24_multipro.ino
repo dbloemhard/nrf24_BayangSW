@@ -1,7 +1,9 @@
-#include <util/atomic.h>
-#include <EEPROM.h>
-#include "iface_nrf24l01.h"
-
+// Use serial monitor to see PPM values
+//#define DEBUGPPM
+// Use serial plotter to see channel output
+//#define DEBUGCHANNELS
+//#define DEBUGTELEMETRY
+//
 // ##########################################
 // #####   MultiProtocol nRF24L01 Tx   ######
 // ##########################################
@@ -30,41 +32,63 @@
 // You should have received a copy of the GNU General Public License.
 // If not, see <http://www.gnu.org/licenses/>.
 
+#include <EEPROM.h>
+#include "iface_nrf24l01.h"
 
-// ############ Wiring ################
-#define PPM_pin   2  // PPM in
-//SPI Comm.pins with nRF24L01
-#define MOSI_pin  3  // MOSI - D3
-#define SCK_pin   4  // SCK  - D4
-#define CE_pin    5  // CE   - D5
-#define MISO_pin  A0 // MISO - A0
-#define CS_pin    A1 // CS   - A1
+// ######### TX Aux Switch to PPM Channel Map ##########
+// Use debug channels with the serial plotter (Arduino IDE) to see which switches
+// map to which ppm channel (5-12). Following values are for the default Lite
+// Radio 2
+#define SwitchA AUX1
+#define SwitchB AUX2
+#define SwitchC AUX3
+#define SwitchD AUX4
 
-#define ledPin    13 // LED  - D13
+// ######### Channel Mapping for Silverware ############
+// This is where you map switch positions to Silverware channels. Normally this 
+// can be done from your model configuration in the TX, but on the Lite Radio we
+// cannot switch models in on the TX, so you have to share the configuration with
+// the Frsky transmitter
+// Examples
+// #define CHAN_5 UP(SwitchA)
+// - CHAN_5 is active when SwitchA is UP
+//
+// More complex
+// #define CHAN_6 DOWN(SwitchB) || MIDDLE(SwitchB)
+// - CHAN_6 is active when SwitchB is in the DOWN position OR the MIDDLE position
+//
+// Using multiple switches to send one channel:
+// #define CHAN_12 DOWN(SwitchA) && DOWN(SwitchD)
+// - CHAN_12 is active when both SwitchA and SwitchD are in the DOWN position
+//
+// Always send channel as active:
+// #define CHAN_6 true
+//
+// Never send channel/not used:
+// #define CHAN_12 false
+//
+#define CHAN_5 UP(SwitchA)
+#define CHAN_6 DOWN(SwitchB) || MIDDLE(SwitchB)
+#define CHAN_7 UP(SwitchD)
+#define CHAN_8 MIDDLE(SwitchB)
+#define CHAN_9 DOWN(SwitchC)
+#define CHAN_10 UP(SwitchC)
+#define CHAN_11 UP(SwitchB) || MIDDLE(SwitchB)
+#define CHAN_12 false // always off
 
-// SPI outputs
-#define MOSI_on PORTD |= _BV(3)  // PD3
-#define MOSI_off PORTD &= ~_BV(3)// PD3
-#define SCK_on PORTD |= _BV(4)   // PD4
-#define SCK_off PORTD &= ~_BV(4) // PD4
-#define CE_on PORTD |= _BV(5)    // PD5
-#define CE_off PORTD &= ~_BV(5)  // PD5
-#define CS_on PORTC |= _BV(1)    // PC1
-#define CS_off PORTC &= ~_BV(1)  // PC1
-// SPI input
-#define  MISO_on (PINC & _BV(0)) // PC0
 
-#define RF_POWER TX_POWER_80mW 
-
+// ######### PPM configuration ############
 // tune ppm input for "special" transmitters
 // #define SPEKTRUM // TAER, 1100-1900, AIL & RUD reversed
 
 // PPM stream settings
+// Use DEBUGPPM and DEBUGCHANNELS to confirm channels are streamed in the order below
+// And that the Min/Max values are correct
 #define CHANNELS 12 // number of channels in ppm stream, 12 ideally
 enum chan_order{
-    THROTTLE,
     AILERON,
     ELEVATOR,
+    THROTTLE,
     RUDDER,
     AUX1,  // (CH5)  led light, or 3 pos. rate on CX-10, H7, or inverted flight on H101
     AUX2,  // (CH6)  flip control
@@ -82,28 +106,87 @@ enum chan_order{
 #define PPM_MAX 2000
 #define PPM_MIN_COMMAND 1300
 #define PPM_MAX_COMMAND 1700
+
 #define GET_FLAG(ch, mask) (ppm[ch] > PPM_MAX_COMMAND ? mask : 0)
 #define GET_FLAG_INV(ch, mask) (ppm[ch] < PPM_MIN_COMMAND ? mask : 0)
+#define UP(ch) (ppm[ch] > PPM_MAX_COMMAND)
+#define MIDDLE(ch) (PPM_MIN_COMMAND < ppm[ch] && ppm[ch] < PPM_MAX_COMMAND)
+#define DOWN(ch) (ppm[ch] < PPM_MIN_COMMAND)
+#define REBINDGESTURE (ppm[RUDDER] < PPM_MIN_COMMAND && ppm[THROTTLE] < PPM_SAFE_THROTTLE && ppm[AILERON] > PPM_MAX_COMMAND && ppm[ELEVATOR] > PPM_MAX_COMMAND)
+
+// ############ Board Selection ############
+#define STM32_BOARD
+// #define ATMEGA328P_BOARD
+
+// ############ Wiring #####################
+#ifdef STM32_BOARD
+  #define PPM_pin   PB11  // PPM in
+  
+  //SPI Comm.pins with nRF24L01
+  #define MOSI_pin  PB15  // MOSI - D3
+  #define SCK_pin   PB13  // SCK  - D4
+  #define CE_pin    PA8  // CE - D5
+  #define MISO_pin  PB14 // MISO - A0
+  #define CS_pin    PB12 // CS   - A1
+  
+  // LED
+  #define ledPin    PC13 // LED  - D13
+  #define LED_on digitalWrite(ledPin, LOW)
+  #define LED_off digitalWrite(ledPin, HIGH)
+
+  // SPI outputs
+  #define MOSI_on digitalWrite(MOSI_pin,HIGH)
+  #define MOSI_off digitalWrite(MOSI_pin,LOW)
+  #define SCK_on digitalWrite(SCK_pin,HIGH)
+  #define SCK_off digitalWrite(SCK_pin,LOW)
+  #define CE_on digitalWrite(CE_pin,HIGH)
+  #define CE_off digitalWrite(CE_pin,LOW)
+  #define CS_on digitalWrite(CS_pin,HIGH)
+  #define CS_off digitalWrite(CS_pin,LOW)
+  // SPI input
+  #define  MISO_on (digitalRead(MISO_pin)==HIGH)
+
+  // Need to manually configure timer on the STM32 board
+  HardwareTimer HWTimer2(TIM2);
+  #define TCNT1 TIM2->CNT
+  
+#else //ATMEGA328P_BOARD
+  #define PPM_pin   2  // PPM in
+  
+  //SPI Comm.pins with nRF24L01
+  #define MOSI_pin  3  // MOSI - D3
+  #define SCK_pin   4  // SCK  - D4
+  #define CE_pin    5  // CE   - D5
+  #define MISO_pin  A0 // MISO - A0
+  #define CS_pin    A1 // CS   - A1
+  
+  // LED
+  #define ledPin    13 // LED  - D13
+  #define LED_on digitalWrite(ledPin, HIGH)
+  #define LED_off digitalWrite(ledPin, LOW)
+  
+  // SPI outputs
+  #define MOSI_on PORTD |= _BV(3)  // PD3
+  #define MOSI_off PORTD &= ~_BV(3)// PD3
+  #define SCK_on PORTD |= _BV(4)   // PD4
+  #define SCK_off PORTD &= ~_BV(4) // PD4
+  #define CE_on PORTD |= _BV(5)    // PD5
+  #define CE_off PORTD &= ~_BV(5)  // PD5
+  #define CS_on PORTC |= _BV(1)    // PC1
+  #define CS_off PORTC &= ~_BV(1)  // PC1
+  // SPI input
+  #define  MISO_on (PINC & _BV(0)) // PC0
+
+  #include <util/atomic.h>
+#endif
+
+#define RF_POWER TX_POWER_80mW 
 
 // supported protocols
 enum {
-    PROTO_V2X2 = 0,     // WLToys V2x2, JXD JD38x, JD39x, JJRC H6C, Yizhan Tarantula X6 ...
-    PROTO_CG023,        // EAchine CG023, CG032, 3D X4
-    PROTO_CX10_BLUE,    // Cheerson CX-10 blue board, newer red board, CX-10A, CX-10C, Floureon FX-10, CX-Stars (todo: add DM007 variant)
-    PROTO_CX10_GREEN,   // Cheerson CX-10 green board
-    PROTO_H7,           // EAchine H7, MoonTop M99xx
+    PROTO_BAYANG_SILVERWARE = 0, // Bayang for Silverware with frsky telemetry
     PROTO_BAYANG,       // EAchine H8(C) mini, H10, BayangToys X6, X7, X9, JJRC JJ850, Floureon H101
-    PROTO_SYMAX5C1,     // Syma X5C-1 (not older X5C), X11, X11C, X12
-    PROTO_YD829,        // YD-829, YD-829C, YD-822 ...
-    PROTO_H8_3D,        // EAchine H8 mini 3D, JJRC H20, H22
-    PROTO_MJX,          // MJX X600 (can be changed to Weilihua WLH08, X800 or H26D)
-    PROTO_SYMAXOLD,     // Syma X5C, X2
-    PROTO_HISKY,        // HiSky RXs, HFP80, HCP80/100, FBL70/80/90/100, FF120, HMX120, WLToys v933/944/955 ...
-    PROTO_KN,           // KN (WLToys variant) V930/931/939/966/977/988
-    PROTO_YD717,        // Cheerson CX-10 red (older version)/CX11/CX205/CX30, JXD389/390/391/393, SH6057/6043/6044/6046/6047, FY326Q7, WLToys v252 Pro/v343, XinXun X28/X30/X33/X39/X40
-    PROTO_FQ777124,     // FQ777-124 pocket drone
     PROTO_E010,         // EAchine E010, NiHui NH-010, JJRC H36 mini
-    PROTO_BAYANG_SILVERWARE, // Bayang for Silverware with frsky telemetry
     PROTO_END
 };
 
@@ -116,9 +199,12 @@ enum{
     ee_TXID3
 };
 
+// Telemetry definition
 struct {
-    uint16_t volt1;
-    uint16_t rssi;
+    uint16_t volt1; // Uncompensated voltage
+    uint16_t volt2; // Compensated voltage
+    uint16_t rssi;  // TX RSSI - how many telemetry packets received per second
+    uint16_t rx_rssi;  // RX RSSI - how packets received per second the receiver sees
     uint8_t updated;
     uint32_t lastUpdate;
 } telemetry_data;
@@ -131,32 +217,45 @@ static bool reset=true;
 volatile uint16_t Servo_data[12];
 static uint16_t ppm[12] = {PPM_MIN,PPM_MIN,PPM_MIN,PPM_MIN,PPM_MID,PPM_MID,
                            PPM_MID,PPM_MID,PPM_MID,PPM_MID,PPM_MID,PPM_MID,};
+uint16_t rebindCounter=0;
 
 void setup()
 {
     randomSeed((analogRead(A4) & 0x1F) | (analogRead(A5) << 5));
     pinMode(ledPin, OUTPUT);
-    digitalWrite(ledPin, LOW); //start LED off
+    LED_off; //start LED off
     pinMode(PPM_pin, INPUT);
     pinMode(MOSI_pin, OUTPUT);
     pinMode(SCK_pin, OUTPUT);
     pinMode(CS_pin, OUTPUT);
     pinMode(CE_pin, OUTPUT);
     pinMode(MISO_pin, INPUT);
-    frskyInit();
+    #if defined(DEBUGPPM) || defined(DEBUGCHANNELS) || defined(DEBUGTELEMETRY)
+      Serial.begin(9600);
+      //Delay so that USB can be recognised/com port opened
+      delay(5000);
+    //#else
+      //frskyInit();    
+    #endif
     
     // PPM ISR setup
     attachInterrupt(digitalPinToInterrupt(PPM_pin), ISR_ppm, CHANGE);
-    TCCR1A = 0;  //reset timer1
-    TCCR1B = 0;
-    TCCR1B |= (1 << CS11);  //set timer1 to increment every 1 us @ 8MHz, 0.5 us @16MHz
 
+    // Timers
+    #ifdef STM32_BOARD
+      init_HWTimer();               //0.5us
+    #else //ATMEGA328P_BOARD
+      TCCR1A = 0;  //reset timer1
+      TCCR1B = 0;
+      TCCR1B |= (1 << CS11);  //set timer1 to increment every 1 us @ 8MHz, 0.5 us @16MHz
+    #endif
+    
     set_txid(false);
 }
 
 void loop()
 {
-    uint32_t timeout=0;
+    uint32_t timeout=0;    
     // reset / rebind
     if(reset || ppm[AUX8] > PPM_MAX_COMMAND) {
         reset = false;
@@ -165,57 +264,46 @@ void loop()
         NRF24L01_Initialize();
         init_protocol();
     }
+    if(rebindCounter > 1000){
+        rebindCounter = 0;
+        NRF24L01_Reset();
+        NRF24L01_Initialize();
+        init_protocol();      
+    }
+        
     telemetry_data.updated = 0;
     // process protocol
     switch(current_protocol) {
-        case PROTO_CG023:
-        case PROTO_YD829:
-            timeout = process_CG023();
-            break;
-        case PROTO_V2X2:
-            timeout = process_V2x2();
-            break;
-        case PROTO_CX10_GREEN:
-        case PROTO_CX10_BLUE:
-            timeout = process_CX10();
-            break;
-        case PROTO_H7:
-            timeout = process_H7();
-            break;
         case PROTO_BAYANG:
         case PROTO_BAYANG_SILVERWARE:
             timeout = process_Bayang();
             break;
-        case PROTO_SYMAX5C1:
-        case PROTO_SYMAXOLD:
-            timeout = process_SymaX();
-            break;
-        case PROTO_H8_3D:
-            timeout = process_H8_3D();
-            break;
-        case PROTO_MJX:
         case PROTO_E010:
             timeout = process_MJX();
-            break;
-        case PROTO_HISKY:
-            timeout = process_HiSky();
-            break;
-        case PROTO_KN:
-            timeout = process_KN();
-            break;
-        case PROTO_YD717:
-            timeout = process_YD717();
-            break;
-        case PROTO_FQ777124:
-            timeout = process_FQ777124();
             break;
     }
     // updates ppm values out of ISR
     update_ppm();
-    
+
+    if(REBINDGESTURE)
+      rebindCounter++;
+    else
+      rebindCounter=0;
+   
     while(micros() < timeout) {
         if(telemetry_data.updated) {
-            frskyUpdate();
+            //To do - output telemetry to a small LCD screen?
+            //frskyUpdate();
+          #ifdef DEBUGTELEMETRY
+            Serial.print("volt1: ");
+            Serial.println(telemetry_data.volt1);
+            Serial.print("volt2: ");
+            Serial.println(telemetry_data.volt2);
+            Serial.print("RX RSSI: ");
+            Serial.println(telemetry_data.rx_rssi);
+            Serial.print("TX RSSI: ");
+            Serial.println(telemetry_data.rssi);
+          #endif
         }            
     }
     telemetry_data.updated = 0;
@@ -248,83 +336,24 @@ void selectProtocol()
     }
     
     // startup stick commands (protocol selection / renew transmitter ID)
-    
-    if(ppm[RUDDER] < PPM_MIN_COMMAND && ppm[AILERON] < PPM_MIN_COMMAND) // rudder left + aileron left
-        current_protocol = PROTO_BAYANG_SILVERWARE; // Bayang protocol for Silverware with frsky telemetry
+    if(ppm[RUDDER] > PPM_MAX_COMMAND) // rudder right
+        current_protocol = PROTO_E010; // EAchine E010, NiHui NH-010, JJRC H36 mini
         
     else if(ppm[RUDDER] < PPM_MIN_COMMAND)   // Rudder left
         set_txid(true);                      // Renew Transmitter ID
     
-    // Rudder right + Aileron right + Elevator down
-    else if(ppm[RUDDER] > PPM_MAX_COMMAND && ppm[AILERON] > PPM_MAX_COMMAND && ppm[ELEVATOR] < PPM_MIN_COMMAND)
-        current_protocol = PROTO_E010; // EAchine E010, NiHui NH-010, JJRC H36 mini
-    
-    // Rudder right + Aileron right + Elevator up
-    else if(ppm[RUDDER] > PPM_MAX_COMMAND && ppm[AILERON] > PPM_MAX_COMMAND && ppm[ELEVATOR] > PPM_MAX_COMMAND)
-        current_protocol = PROTO_FQ777124; // FQ-777-124
-
-    // Rudder right + Aileron left + Elevator up
-    else if(ppm[RUDDER] > PPM_MAX_COMMAND && ppm[AILERON] < PPM_MIN_COMMAND && ppm[ELEVATOR] > PPM_MAX_COMMAND)
-        current_protocol = PROTO_YD717; // Cheerson CX-10 red (older version)/CX11/CX205/CX30, JXD389/390/391/393, SH6057/6043/6044/6046/6047, FY326Q7, WLToys v252 Pro/v343, XinXun X28/X30/X33/X39/X40
-    
-    // Rudder right + Aileron left + Elevator down
-    else if(ppm[RUDDER] > PPM_MAX_COMMAND && ppm[AILERON] < PPM_MIN_COMMAND && ppm[ELEVATOR] < PPM_MIN_COMMAND)
-        current_protocol = PROTO_KN; // KN (WLToys variant) V930/931/939/966/977/988
-    
-    // Rudder right + Elevator down
-    else if(ppm[RUDDER] > PPM_MAX_COMMAND && ppm[ELEVATOR] < PPM_MIN_COMMAND)
-        current_protocol = PROTO_HISKY; // HiSky RXs, HFP80, HCP80/100, FBL70/80/90/100, FF120, HMX120, WLToys v933/944/955 ...
-    
-    // Rudder right + Elevator up
-    else if(ppm[RUDDER] > PPM_MAX_COMMAND && ppm[ELEVATOR] > PPM_MAX_COMMAND)
-        current_protocol = PROTO_SYMAXOLD; // Syma X5C, X2 ...
-    
-    // Rudder right + Aileron right
-    else if(ppm[RUDDER] > PPM_MAX_COMMAND && ppm[AILERON] > PPM_MAX_COMMAND)
-        current_protocol = PROTO_MJX; // MJX X600, other sub protocols can be set in code
-    
-    // Rudder right + Aileron left
-    else if(ppm[RUDDER] > PPM_MAX_COMMAND && ppm[AILERON] < PPM_MIN_COMMAND)
-        current_protocol = PROTO_H8_3D; // H8 mini 3D, H20 ...
-    
-    // Elevator down + Aileron right
-    else if(ppm[ELEVATOR] < PPM_MIN_COMMAND && ppm[AILERON] > PPM_MAX_COMMAND)
-        current_protocol = PROTO_YD829; // YD-829, YD-829C, YD-822 ...
-    
-    // Elevator down + Aileron left
-    else if(ppm[ELEVATOR] < PPM_MIN_COMMAND && ppm[AILERON] < PPM_MIN_COMMAND)
-        current_protocol = PROTO_SYMAX5C1; // Syma X5C-1, X11, X11C, X12
-    
-    // Elevator up + Aileron right
-    else if(ppm[ELEVATOR] > PPM_MAX_COMMAND && ppm[AILERON] > PPM_MAX_COMMAND)
+    else if(ppm[AILERON] < PPM_MIN_COMMAND) // Aileron left
         current_protocol = PROTO_BAYANG;    // EAchine H8(C) mini, BayangToys X6/X7/X9, JJRC JJ850 ...
-    
-    // Elevator up + Aileron left
-    else if(ppm[ELEVATOR] > PPM_MAX_COMMAND && ppm[AILERON] < PPM_MIN_COMMAND) 
-        current_protocol = PROTO_H7;        // EAchine H7, MT99xx
-    
-    // Elevator up  
-    else if(ppm[ELEVATOR] > PPM_MAX_COMMAND)
-        current_protocol = PROTO_V2X2;       // WLToys V202/252/272, JXD 385/388, JJRC H6C ...
+          
+    else // Default to bayang (silverware)
+        current_protocol = PROTO_BAYANG_SILVERWARE; // Bayang protocol for Silverware with frsky telemetry
+        // (or read last used protocol from eeprom)
+        //current_protocol = constrain(EEPROM.read(ee_PROTOCOL_ID),0,PROTO_END-1);      
         
-    // Elevator down
-    else if(ppm[ELEVATOR] < PPM_MIN_COMMAND) 
-        current_protocol = PROTO_CG023;      // EAchine CG023/CG031/3D X4, (todo :ATTOP YD-836/YD-836C) ...
-    
-    // Aileron right
-    else if(ppm[AILERON] > PPM_MAX_COMMAND)  
-        current_protocol = PROTO_CX10_BLUE;  // Cheerson CX10(blue pcb, newer red pcb)/CX10-A/CX11/CX12 ... 
-    
-    // Aileron left
-    else if(ppm[AILERON] < PPM_MIN_COMMAND)  
-        current_protocol = PROTO_CX10_GREEN;  // Cheerson CX10(green pcb)... 
-    
-    // read last used protocol from eeprom
-    else 
-        current_protocol = constrain(EEPROM.read(ee_PROTOCOL_ID),0,PROTO_END-1);      
-    // update eeprom 
+    // update eeprom with selected protocol
     EEPROM.update(ee_PROTOCOL_ID, current_protocol);
     // wait for safe throttle
+   
     while(ppm[THROTTLE] > PPM_SAFE_THROTTLE) {
         delay(100);
         update_ppm();
@@ -334,54 +363,14 @@ void selectProtocol()
 void init_protocol()
 {
     switch(current_protocol) {
-        case PROTO_CG023:
-        case PROTO_YD829:
-            CG023_init();
-            CG023_bind();
-            break;
-        case PROTO_V2X2:
-            V2x2_init();
-            V2x2_bind();
-            break;
-        case PROTO_CX10_GREEN:
-        case PROTO_CX10_BLUE:
-            CX10_init();
-            CX10_bind();
-            break;
-        case PROTO_H7:
-            H7_init();
-            H7_bind();
-            break;
         case PROTO_BAYANG:
         case PROTO_BAYANG_SILVERWARE:
             Bayang_init();
             Bayang_bind();
             break;
-        case PROTO_SYMAX5C1:
-        case PROTO_SYMAXOLD:
-            Symax_init();
-            break;
-        case PROTO_H8_3D:
-            H8_3D_init();
-            H8_3D_bind();
-            break;
-        case PROTO_MJX:
         case PROTO_E010:
             MJX_init();
             MJX_bind();
-            break;
-        case PROTO_HISKY:
-            HiSky_init();
-            break;
-        case PROTO_KN:
-            kn_start_tx(true); // autobind
-            break;
-        case PROTO_YD717:
-            YD717_init();
-            break;
-        case PROTO_FQ777124:
-            FQ777124_init();
-            FQ777124_bind();
             break;
     }
 }
@@ -390,10 +379,15 @@ void init_protocol()
 void update_ppm()
 {
     for(uint8_t ch=0; ch<CHANNELS; ch++) {
+    #ifdef STM32_BOARD
+            ppm[ch] = Servo_data[ch];
+    #else // ATMEGA328P
         ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
             ppm[ch] = Servo_data[ch];
         }
+    #endif
     }
+
 #ifdef SPEKTRUM
     for(uint8_t ch=0; ch<CHANNELS; ch++) {
         if(ch == AILERON || ch == RUDDER) {
@@ -406,6 +400,9 @@ void update_ppm()
 
 void ISR_ppm()
 {
+  #ifdef STM32_BOARD
+    #define PPM_SCALE 1L
+  #else // ATMEGA328P
     #if F_CPU == 16000000
         #define PPM_SCALE 1L
     #elif F_CPU == 8000000
@@ -413,19 +410,62 @@ void ISR_ppm()
     #else
         #error // 8 or 16MHz only !
     #endif
+  #endif
+  
     static unsigned int pulse;
     static unsigned long counterPPM;
     static byte chan;
+    static unsigned long debugValue;
     counterPPM = TCNT1;
     TCNT1 = 0;
     ppm_ok=false;
     if(counterPPM < 510 << PPM_SCALE) {  //must be a pulse if less than 510us
         pulse = counterPPM;
+    #ifdef DEBUGPPM
+        Serial.print("Pulse (");
+        Serial.print(counterPPM);
+        Serial.println(")");
+    #endif
     }
     else if(counterPPM > 1910 << PPM_SCALE) {  //sync pulses over 1910us
         chan = 0;
+    #ifdef DEBUGPPM
+        Serial.print("Sync Frame (");
+        Serial.print(counterPPM);
+        Serial.println(")");
+    #endif
+    #ifdef DEBUGCHANNELS
+        Serial.print(Servo_data[0]);
+        Serial.print(" ");
+        Serial.print(Servo_data[1]);
+        Serial.print(" ");
+        Serial.print(Servo_data[2]);
+        Serial.print(" ");
+        Serial.print(Servo_data[3]);
+        Serial.print(" ");
+        Serial.print(Servo_data[4]);
+        Serial.print(" ");
+        Serial.print(Servo_data[5]);
+        Serial.print(" ");
+        Serial.print(Servo_data[6]);
+        Serial.print(" ");
+        Serial.print(Servo_data[7]);
+        Serial.println();
+    #endif
     }
     else{  //servo values between 510us and 2420us will end up here
+      #ifdef DEBUGPPM
+        debugValue = constrain((counterPPM + pulse) >> PPM_SCALE, PPM_MIN, PPM_MAX);
+        Serial.print("Channel ");
+        Serial.print(chan);
+        Serial.print(": ");
+        Serial.print(debugValue);
+        Serial.print(" (PPM Count ");
+        Serial.print(counterPPM);
+        Serial.print(", pulse ");
+        Serial.print(pulse);
+        Serial.println(")");
+      #endif
         if(chan < CHANNELS) {
             Servo_data[chan]= constrain((counterPPM + pulse) >> PPM_SCALE, PPM_MIN, PPM_MAX);
             if(chan==3)
@@ -434,3 +474,17 @@ void ISR_ppm()
         chan++;
     }
 }
+
+#ifdef STM32_BOARD
+  void init_HWTimer()
+  { 
+    HWTimer2.pause();                 // Pause the timer2 while we're configuring it
+    TIM2->PSC = 35;                // 36-1;for 72 MHZ /0.5uSec/(35+1)
+    TIM2->ARR = 0xFFFF;              // Count until 0xFFFF
+    HWTimer2.setMode(1, TIMER_OUTPUT_COMPARE);  // Main scheduler
+    TIM2->SR = 0x1E5F & ~TIM_SR_CC2IF;     // Clear Timer2/Comp2 interrupt flag
+    TIM2->DIER &= ~TIM_DIER_CC2IE;       // Disable Timer2/Comp2 interrupt
+    HWTimer2.refresh();                 // Refresh the timer's count, prescale, and overflow
+    HWTimer2.resume();
+  }
+#endif

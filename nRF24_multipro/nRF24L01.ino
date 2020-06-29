@@ -138,6 +138,11 @@ uint8_t NRF24L01_Reset()
     uint8_t status2 = NRF24L01_ReadReg(0x07);
     NRF24L01_SetTxRxMode(TXRX_OFF);
     return (status1 == status2 && (status1 & 0x0f) == 0x0e);
+    #ifdef DEBUGNRF24
+    Serial.println("NRF241L01_Reset");
+    Serial.println(status1)
+    Serial.println(status2);
+    #endif
 }
 
 uint8_t NRF24L01_SetPower(enum TX_Power power)

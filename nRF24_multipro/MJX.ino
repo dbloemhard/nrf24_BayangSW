@@ -27,7 +27,7 @@ enum {
     FORMAT_H26D,
     FORMAT_E010,
 };
-u8 mjx_format;
+uint8_t mjx_format;
 
 #define MJX_CHANNEL_LED         AUX1
 #define MJX_CHANNEL_FLIP        AUX2
@@ -39,23 +39,23 @@ u8 mjx_format;
 #define MJX_CHANNEL_PAN         AUX7  // H26D
 #define MJX_CHANNEL_TILT        AUX8
 
-static u16 mjx_counter;
-static u8 mjx_rf_chan;
-static u8 mjx_txid[3];
-static u8 mjx_rf_channels[MJX_RF_NUM_CHANNELS];
+static uint16_t mjx_counter;
+static uint8_t mjx_rf_chan;
+static uint8_t mjx_txid[3];
+static uint8_t mjx_rf_channels[MJX_RF_NUM_CHANNELS];
 
 // haven't figured out mjx_txid<-->rf channel mapping for MJX models
 static const struct {
-    u8 mjx_txid[3];
-    u8 rfchan[MJX_RF_NUM_CHANNELS];
+    uint8_t mjx_txid[3];
+    uint8_t rfchan[MJX_RF_NUM_CHANNELS];
 } 
 mjx_tx_rf_map[] = {{{0xF8, 0x4F, 0x1C}, {0x0A, 0x46, 0x3A, 0x42}},
                   {{0xC8, 0x6E, 0x02}, {0x0A, 0x3C, 0x36, 0x3F}},
                   {{0x48, 0x6A, 0x40}, {0x0A, 0x43, 0x36, 0x3F}}};
                       
 static const struct {
-    u8 e010_txid[2];
-    u8 rfchan[MJX_RF_NUM_CHANNELS];
+    uint8_t e010_txid[2];
+    uint8_t rfchan[MJX_RF_NUM_CHANNELS];
 }
 e010_tx_rf_map[] = {{{0x4F, 0x1C}, {0x3A, 0x35, 0x4A, 0x45}},
                    {{0x90, 0x1C}, {0x2E, 0x36, 0x3E, 0x46}}, 
@@ -66,17 +66,17 @@ e010_tx_rf_map[] = {{{0x4F, 0x1C}, {0x3A, 0x35, 0x4A, 0x45}},
                    {{0xFD, 0x4F}, {0x33, 0x3B, 0x43, 0x4B}}, 
                    {{0x86, 0x3C}, {0x34, 0x3E, 0x44, 0x4E}}};
 
-u8 mjx_checksum()
+uint8_t mjx_checksum()
 {
-    u8 sum = packet[0];
+    uint8_t sum = packet[0];
     for (int i=1; i < MJX_PACKET_SIZE-1; i++) sum += packet[i];
     return sum;
 }
 
 // Channel values are sign + magnitude 8bit values
-u8 mjx_convert_channel(u8 num)
+uint8_t mjx_convert_channel(uint8_t num)
 {
-    u8 val = map(ppm[num], PPM_MIN, PPM_MAX, 0, 255);
+    uint8_t val = map(ppm[num], PPM_MIN, PPM_MAX, 0, 255);
     return (val < 128 ? 127-val : val);	
 }
 
@@ -86,10 +86,10 @@ u8 mjx_convert_channel(u8 num)
 #define TILT_DOWN        0x20
 #define TILT_UP          0x10
 
-u8 mjx_pan_tilt_value()
+uint8_t mjx_pan_tilt_value()
 {
-    static u8 count;
-    u8 pan = 0;
+    static uint8_t count;
+    uint8_t pan = 0;
     
     count++;
 
@@ -105,7 +105,7 @@ u8 mjx_pan_tilt_value()
 }
 
 #define CHAN2TRIM(X) (((X) & 0x80 ? (X) : 0x7f - (X)) >> 1)
-void mjx_send_packet(u8 bind)
+void mjx_send_packet(uint8_t bind)
 {
     packet[0] = map(ppm[THROTTLE], PPM_MIN, PPM_MAX, 0, 255);
     packet[1] = mjx_convert_channel(RUDDER);          // rudder
@@ -212,7 +212,7 @@ void initialize_mjx_txid()
 
 void MJX_init()
 {
-    u8 rx_tx_addr[MJX_ADDRESS_LENGTH];
+    uint8_t rx_tx_addr[MJX_ADDRESS_LENGTH];
     
     if (current_protocol == PROTO_E010)
         mjx_format = FORMAT_E010;
@@ -279,5 +279,5 @@ void MJX_bind()
         digitalWrite(ledPin, mjx_counter & 0x10);
     }
     mjx_init2();
-    digitalWrite(ledPin, HIGH);
+    LED_on;
 }

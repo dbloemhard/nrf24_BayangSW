@@ -30,17 +30,18 @@ static uint16_t Bayang_count=0;
 
 enum{
     // flags going to packet[2]
-    BAYANG_FLAG_RTH      = 0x01,
-    BAYANG_FLAG_HEADLESS = 0x02,
-    BAYANG_FLAG_FLIP     = 0x08,
-    BAYANG_FLAG_VIDEO    = 0x10,
-    BAYANG_FLAG_SNAPSHOT = 0x20,
+    BAYANG_FLAG_RTH      = 0x01,  // CHAN_10
+    BAYANG_FLAG_HEADLESS = 0x02,  // CHAN_9
+    BAYANG_FLAG_FLIP     = 0x08,  // CHAN_6
+    BAYANG_FLAG_VIDEO    = 0x10,  // CHAN_8
+    BAYANG_FLAG_SNAPSHOT = 0x20,  // CHAN_7
 };
 
 enum{
     // flags going to packet[3]
-    BAYANG_FLAG_EMG_STOP = 0x04,
-    BAYANG_FLAG_INVERT   = 0x80,
+    BAYANG_FLAG_EMG_STOP = 0x04,  // CHAN_12
+    BAYANG_FLAG_TAKE_OFF = 0x20,  // CHAN_11
+    BAYANG_FLAG_INVERT   = 0x80,  // CHAN_5
 };
 
 uint32_t process_Bayang()
@@ -81,7 +82,7 @@ uint32_t process_Bayang()
 void Bayang_init()
 {
     uint8_t i;
-    const u8 bind_address[] = {0,0,0,0,0};
+    const uint8_t bind_address[] = {0,0,0,0,0};
     memcpy(Bayang_rx_tx_addr, transmitterID, 4);
     Bayang_rx_tx_addr[4] = Bayang_rx_tx_addr[0] ^ 0xff;
     Bayang_rf_channels[0] = 0x00;
@@ -120,18 +121,18 @@ void Bayang_bind()
     }
     XN297_SetTXAddr(Bayang_rx_tx_addr, BAYANG_ADDRESS_LENGTH);
     XN297_SetRXAddr(Bayang_rx_tx_addr, BAYANG_ADDRESS_LENGTH);
-    digitalWrite(ledPin, HIGH);
+    LED_on;
 }
 
-#define DYNTRIM(chval) ((u8)((chval >> 2) & 0xfc))
+#define DYNTRIM(chval) ((uint8_t)((chval >> 2) & 0xfc))
 
-void Bayang_send_packet(u8 bind)
+void Bayang_send_packet(uint8_t bind)
 {
     union {
-        u16 value;
+        uint16_t value;
         struct {
-            u8 lsb;
-            u8 msb;
+            uint8_t lsb;
+            uint8_t msb;
         } bytes;
     } chanval;
 
@@ -147,13 +148,26 @@ void Bayang_send_packet(u8 bind)
     } else {
         packet[0] = 0xa5;
         packet[1] = 0xfa;   // normal mode is 0xf7, expert 0xfa
-        packet[2] = GET_FLAG(AUX2, BAYANG_FLAG_FLIP)
-                  | GET_FLAG(AUX5, BAYANG_FLAG_HEADLESS)
-                  | GET_FLAG(AUX6, BAYANG_FLAG_RTH)
-                  | GET_FLAG(AUX3, BAYANG_FLAG_SNAPSHOT)
-                  | GET_FLAG(AUX4, BAYANG_FLAG_VIDEO);
-        packet[3] = GET_FLAG(AUX1, BAYANG_FLAG_INVERT)
-                  | GET_FLAG(AUX7, BAYANG_FLAG_EMG_STOP);
+        if(current_protocol == PROTO_BAYANG_SILVERWARE) {          
+            packet[2] = (CHAN_6 ? BAYANG_FLAG_FLIP : 0)
+                      | (CHAN_7 ? BAYANG_FLAG_SNAPSHOT : 0)
+                      | (CHAN_8 ? BAYANG_FLAG_VIDEO : 0)
+                      | (CHAN_9 ? BAYANG_FLAG_HEADLESS : 0)
+                      | (CHAN_10 ? BAYANG_FLAG_RTH : 0);
+            packet[3] = (CHAN_5 ? BAYANG_FLAG_INVERT : 0)
+                      | (CHAN_11 ? BAYANG_FLAG_TAKE_OFF : 0) 
+                      | (CHAN_12 ? BAYANG_FLAG_EMG_STOP : 0); 
+        }
+        else {
+            packet[2] = GET_FLAG(AUX2, BAYANG_FLAG_FLIP)
+                      | GET_FLAG(AUX5, BAYANG_FLAG_HEADLESS)
+                      | GET_FLAG(AUX6, BAYANG_FLAG_RTH)
+                      | GET_FLAG(AUX3, BAYANG_FLAG_SNAPSHOT)
+                      | GET_FLAG(AUX4, BAYANG_FLAG_VIDEO);
+            packet[3] = GET_FLAG(AUX1, BAYANG_FLAG_INVERT)
+                      // | GET_FLAG(AUX7, BAYANG_FLAG_TAKE_OFF)
+                      | GET_FLAG(AUX8, BAYANG_FLAG_EMG_STOP);
+        }
         chanval.value = map(ppm[AILERON], PPM_MIN, PPM_MAX, 0, 0x3ff);   // aileron
         packet[4] = chanval.bytes.msb + DYNTRIM(chanval.value);
         packet[5] = chanval.bytes.lsb;
@@ -214,10 +228,39 @@ static uint8_t Bayang_check_rx()
         NRF24L01_FlushRx();
         // decode data , check sum is ok as well, since there is no crc
         if (packet[0] == 0x85 && packet[14] == Bayang_checksum()) {
-            // uncompensated battery volts*100
+            //// uncompensated battery volts*100
             chanval.bytes.msb = packet[3] & 0x7;
             chanval.bytes.lsb = packet[4] & 0xff;
             telemetry_data.volt1 = chanval.value;
+
+            // compensated battery volts*100/2
+            chanval.bytes.msb = packet[5] & 0x7;
+            chanval.bytes.lsb = packet[6] & 0xff;
+            telemetry_data.volt2 = chanval.value;
+            
+            // reception in packets / sec
+            telemetry_data.rx_rssi = packet[7];
+            //Flags
+            //uint8_t flags = packet[3] >> 3;
+            // battery low: flags & 1
+
+          #ifdef DEBUGTELEMETRY
+            Serial.print("packet[1]: ");
+            Serial.println(packet[1]);
+            Serial.print("packet[2]: ");
+            Serial.println(packet[2]);
+            Serial.print("packet[3]: ");
+            Serial.println(packet[3]);
+            Serial.print("packet[4]: ");
+            Serial.println(packet[4]);            
+            Serial.print("packet[5]: ");
+            Serial.println(packet[5]);
+            Serial.print("packet[6]: ");
+            Serial.println(packet[6]);
+            Serial.print("packet[7]: ");
+            Serial.println(packet[7]);
+          #endif
+            
             Bayang_telemetry_count++;
             telemetry_data.updated = 1;
             telemetry_data.lastUpdate = millis();
@@ -226,4 +269,3 @@ static uint8_t Bayang_check_rx()
     }
     return 0;
 }
-
