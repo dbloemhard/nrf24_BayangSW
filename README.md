@@ -5,11 +5,12 @@ Based on Goebish's nrf24-multipro
 ![Screenshot](https://i.imgur.com/PkeiJ6Y.jpg)  
 ![Screenshot](https://i.imgur.com/E3ntuna.jpg)  
 
+Optimised for use with the BetaFPV Lite Radio 2, which has no screen or menu to configure models.
+
 ## Binding Procedure
-- Create a model in OpenTX using external module in PPM mode, 12 channels and TAER sequence order.
-- Turn off Taranis.
-- Power up quad.
-- While holding the appropriate stick pattern listed below, power up Taranis.
+- Use the default model setup on the transmitter - OpenTX companion can be used to confirm switch/channel assignments (I reversed the switches on the top)
+- Set Bayang channel mapping to individual switch positions in nrf-multipro.ino
+- While holding the appropriate stick pattern listed below, power up the Lite Radio.
 - Arm quad based on it's firmware's specification. 
 
 
